@@ -1,0 +1,104 @@
+import numpy as np
+import pandas as pd
+from hmmlearn import hmm
+from sklearn.preprocessing import StandardScaler
+
+class TradingStrategy:
+    def __init__(self):
+        self.idc_model = None
+        self.hmm_model = None
+        self.scaler = StandardScaler()
+    
+    def calculate_idc(self, prices, theta):
+        """
+        Calculate Intrinsic Directional Change (IDC) events
+        """
+        events = []
+        last_extreme = prices[0]
+        mode = "Peak"
+        
+        for i, price in enumerate(prices):
+            if mode == "Peak" and price <= last_extreme * (1 - theta):
+                events.append(("Downturn", i, price))
+                mode = "Trough"
+                last_extreme = price
+            elif mode == "Trough" and price >= last_extreme * (1 + theta):
+                events.append(("Upturn", i, price))
+                mode = "Peak"
+                last_extreme = price
+        
+        return events
+    
+    def calculate_rdc(self, prices, events, alpha):
+        """
+        Calculate R_DC indicator
+        """
+        rdc_values = []
+        for i in range(1, len(events)):
+            dc_interval = events[i][1] - events[i-1][1]
+            os_interval = 0
+            j = events[i][1]
+            while j < len(prices) and abs(prices[j] - events[i][2]) / events[i][2] < alpha:
+                os_interval += 1
+                j += 1
+            rdc = dc_interval / (dc_interval + os_interval) if dc_interval + os_interval > 0 else 0
+            rdc_values.append(rdc)
+        return rdc_values
+    
+    def fit_hmm(self, rdc_values, n_states=2):
+        """
+        Fit Hidden Markov Model for regime detection
+        """
+        X = np.array(rdc_values).reshape(-1, 1)
+        X_scaled = self.scaler.fit_transform(X)
+        
+        self.hmm_model = hmm.GaussianHMM(n_components=n_states, covariance_type="full", n_iter=100)
+        self.hmm_model.fit(X_scaled)
+    
+    def detect_regime(self, rdc_value):
+        """
+        Detect market regime using the fitted HMM
+        """
+        X = self.scaler.transform([[rdc_value]])
+        regime = self.hmm_model.predict(X)[0]
+        return "Normal" if regime == 0 else "Abnormal"
+    
+    def trading_decision(self, regime, price):
+        """
+        Make trading decision based on detected regime
+        """
+        if regime == "Normal":
+            return "Hold"
+        elif regime == "Abnormal":
+            # This is a simplified decision. In reality, you'd use more complex logic.
+            return "Buy" if np.random.rand() > 0.5 else "Sell"
+    
+    def backtest(self, prices, theta=0.01, alpha=0.01):
+        """
+        Backtest the trading strategy
+        """
+        events = self.calculate_idc(prices, theta)
+        rdc_values = self.calculate_rdc(prices, events, alpha)
+        
+        self.fit_hmm(rdc_values)
+        
+        positions = []
+        for i, rdc in enumerate(rdc_values):
+            regime = self.detect_regime(rdc)
+            decision = self.trading_decision(regime, prices[events[i+1][1]])
+            positions.append((events[i+1][1], decision))
+        
+        return positions
+
+# Example usage
+if __name__ == "__main__":
+    # Generate some example price data
+    np.random.seed(42)
+    prices = np.cumsum(np.random.randn(1000)) + 100
+    
+    strategy = TradingStrategy()
+    positions = strategy.backtest(prices)
+    
+    print("Trading Positions:")
+    for pos in positions[:10]:  # Print first 10 positions
+        print(f"Time: {pos[0]}, Action: {pos[1]}")
